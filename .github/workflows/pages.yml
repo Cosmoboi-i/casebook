@@ -23,6 +23,15 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      # The repo is public, so the admin desk's real URL lives only in the
+      # DESK_PATH secret. desk.html itself is never published under that name.
+      # (Obscurity only: sign-in + Supabase RLS are what protect the data.)
+      - name: Move the desk to its secret path
+        env:
+          DESK_PATH: ${{ secrets.DESK_PATH }}
+        run: |
+          test -n "$DESK_PATH" || { echo "::error::DESK_PATH secret is not set"; exit 1; }
+          mv site/desk.html "site/${DESK_PATH}.html"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
