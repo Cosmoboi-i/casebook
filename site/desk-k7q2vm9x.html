@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Casebook desk</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗂️</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="casebook.css">
+</head>
+<body>
+<!--
+  Admin desk. Nothing on the public site links here, but the URL is NOT the
+  security boundary: every read and write below is checked by Supabase
+  row-level security against public.admins. A non-admin who finds this page
+  and signs in sees nothing and can change nothing.
+-->
+<header>
+  <div class="wrap">
+    <div class="masthead">
+      <h1 class="brand">Casebook<small>Review desk</small></h1>
+      <div class="meta" id="meta"></div>
+    </div>
+    <nav id="tabs" role="tablist" hidden></nav>
+  </div>
+</header>
+<main class="wrap" id="main"><p class="empty">Checking your session…</p></main>
+<div id="toast" class="toast" hidden></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="casebook.js"></script>
+<script>
+const sb = supabase.createClient(CASEBOOK.url, CASEBOOK.key);
+const REJECT_REASONS = ["Not for MBAs", "Paid entry", "Low quality", "Duplicate", "Deadline too close"];
+const S = { user: null, tab: "review", queue: [], archive: [], decisions: new Map(), meta: null, rejecting: null, busy: false };
+try { S.tab = sessionStorage.getItem("desk-tab") || "review"; } catch (e) {}
+
+// ---------- auth ----------
+function viewLogin(msg) {
+  $("tabs").hidden = true;
+  $("meta").textContent = "";
+  $("main").innerHTML = `<form class="login" id="login">
+      <h2>Sign in</h2>
+      <p>Club reviewers only.</p>
+      <label>Email<input id="email" type="email" autocomplete="username" required></label>
+      <label>Password<input id="password" type="password" autocomplete="current-password" required></label>
+      ${msg ? `<div class="err">${esc(msg)}</div>` : ""}
+      <button class="btn primary" id="signin">Sign in</button>
+    </form>`;
+  $("email").focus();
+}
+
+async function start() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) return viewLogin();
+  S.user = session.user;
+  const { data: isAdmin, error } = await sb.rpc("is_admin");
+  if (error || !isAdmin) {
+    $("main").innerHTML = `<div class="login"><h2>No reviewer access</h2>
+      <p>${esc(S.user.email)} is signed in but isn’t on the reviewer list. Ask the club admin to add it.</p>
+      <button class="btn" data-act="signout">Sign out</button></div>`;
+    return;
+  }
+  $("meta").innerHTML = `${esc(S.user.email)} · <button class="textbtn" data-act="signout">Sign out</button>`;
+  await loadAll();
+}
+
+document.addEventListener("submit", async (e) => {
+  if (e.target.id !== "login") return;
+  e.preventDefault();
+  $("signin").disabled = true;
+  const { error } = await sb.auth.signInWithPassword({ email: $("email").value.trim(), password: $("password").value });
+  if (error) return viewLogin("That email and password didn’t match. Try again.");
+  start();
+});
+
+// ---------- data ----------
+async function loadAll() {
+  const [q, a, d, m] = await Promise.all([
+    sb.from("queue").select("data").order("priority").order("deadline", { nullsFirst: false }),
+    sb.from("archive_items").select("data").order("first_seen", { ascending: false }),
+    sb.from("decisions").select("*"),
+    sb.from("sync_meta").select("data").eq("id", 1).maybeSingle(),
+  ]);
+  const err = [q, a, d, m].find((r) => r.error);
+  if (err) { $("main").innerHTML = `<div class="notice bad">Couldn’t load the desk: ${esc(err.error.message)}. Refresh to try again.</div>`; return; }
+  S.queue = q.data.map((r) => r.data);
+  S.archive = a.data.map((r) => r.data);
+  S.decisions = new Map(d.data.map((r) => [String(r.listing_id), r]));
+  S.meta = m.data && m.data.data;
+  render();
+}
+
+// ---------- selectors ----------
+function needsReview(q) {
+  if (due(q.deadline).past) return false;
+  const d = S.decisions.get(String(q.id));
+  if (!d) return true;
+  if (d.decision === "skip") return localDay(d.decided_at) < today();                    // skips return tomorrow
+  if (d.decision === "approve" && q.changed_at) return q.changed_at > localDay(d.decided_at); // re-check changes
+  return false;
+}
+const reviewItems = () => S.queue.filter(needsReview);
+const approved = () => [...S.decisions.values()].filter((d) => d.decision === "approve" && !due(d.deadline).past)
+  .sort((a, b) => String(a.deadline).localeCompare(String(b.deadline)));
+const undigested = () => approved().filter((d) => !d.digested_at);
+const archivedOpen = () => S.archive.filter((a) => !S.decisions.has(String(a.id)) && !due(a.deadline).past);
+
+// ---------- views ----------
+function ctxChips(c = {}) {
+  const out = [];
+  if (c.d2c_trusted) out.push("d2c-trusted");
+  if (c.tier != null) out.push(`tier ${c.tier}`);
+  if (c.enriched) {
+    out.push(`org type ${c.organisation_type ?? "–"}`);
+    if (c.rounds != null) out.push(`${c.rounds} round${c.rounds === 1 ? "" : "s"}`);
+    out.push(`${c.attachments || 0} attachment${c.attachments === 1 ? "" : "s"}`);
+    out.push(c.web_url ? "external site" : "no external site");
+    if (c.account_tag) out.push(`account: ${c.account_tag}`);
+  }
+  return out.length ? `<div class="ctx">${out.map((x) => `<span>${esc(x)}</span>`).join("")}</div>` : "";
+}
+
+function reviewCard(q) {
+  const t = due(q.deadline), id = String(q.id), prior = S.decisions.get(id);
+  const changes = (q.changed || []).map((c) => `<b>${esc(c.field)}</b> changed`).join(" · ");
+  const actions = S.rejecting === id
+    ? `<div class="reasons"><p>Why reject? Optional, and it helps tune the feed.</p>
+        <div class="chips">${REJECT_REASONS.map((r) => `<button class="chip" data-act="reject" data-id="${id}" data-reason="${esc(r)}">${esc(r)}</button>`).join("")}
+        <button class="chip" data-act="reject" data-id="${id}">No reason</button>
+        <button class="chip plain" data-act="cancel">Cancel</button></div></div>`
+    : `<div class="actions">
+        <button class="btn approve" data-act="approve" data-id="${id}">Approve</button>
+        <button class="btn reject" data-act="ask-reject" data-id="${id}">Reject</button>
+        <button class="btn quiet" data-act="skip" data-id="${id}">Skip for today</button></div>`;
+  return `<article class="card">
+    ${changes && prior ? `<div class="changed">${changes} since you approved it. Check it’s still right.</div>` : ""}
+    <div class="row-top"><div><h3 class="title">${esc(q.title)}</h3><div class="org">${esc(q.org)}</div></div>
+      <span class="due ${t.soon ? "soon" : ""}">${esc(t.text)}</span></div>
+    <div class="facts"><span>${esc(q.eligibility)}</span></div>
+    <div class="facts"><span class="money">${esc(q.prizes)}</span><span>${esc(q.fee)}</span></div>
+    ${ctxChips(q.context)}
+    <a class="link" href="${esc(safeUrl(q.url))}" target="_blank" rel="noopener">Open on Unstop →</a>
+    ${actions}
+  </article>`;
+}
+
+function viewReview() {
+  const items = reviewItems();
+  if (!S.queue.length) return `<p class="empty">Nothing synced yet. The queue fills after the next daily run (7:00 am).</p>`;
+  if (!items.length) return `<p class="empty">All caught up. New competitions arrive with tomorrow’s run.</p>`;
+  return `<p class="intro">${items.length} to review. Skipped ones come back tomorrow.</p><div class="cards">${items.map(reviewCard).join("")}</div>`;
+}
+
+function viewArchive() {
+  const items = archivedOpen();
+  if (!items.length) return `<p class="empty">Nothing archived in the last 7 days.</p>`;
+  const groups = {};
+  items.forEach((a) => (groups[a.reason] ||= []).push(a));
+  return `<p class="intro">What the filter threw away (first seen in the last 7 days). Approve any real case competition you spot. Each rescue shows where the filter is wrong.</p>` +
+    Object.keys(groups).sort((a, b) => groups[b].length - groups[a].length).map((r) =>
+      `<section class="group"><h2><span>${esc(r)}</span><span>${groups[r].length}</span></h2>
+      ${groups[r].sort((a, b) => a.title.localeCompare(b.title)).map((a) => `<div class="arow"><div><a class="t" href="${esc(safeUrl(a.url))}" target="_blank" rel="noopener">${esc(a.title)}</a><div class="o">${esc(a.org)} · ${esc(a.type)}</div></div>
+        <button class="btn" data-act="rescue" data-id="${a.id}">Approve</button></div>`).join("")}</section>`).join("");
+}
+
+function viewListings() {
+  const list = approved();
+  if (!list.length) return `<p class="empty">No open approved competitions yet.</p>`;
+  return `<p class="intro">What students see on the public page right now.</p><ul class="rows">${list.map((d) => listingRow(d.card, d.updated)).join("")}</ul>`;
+}
+
+function digestText(items) {
+  const date = new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+  const lines = [`*Case competitions · ${date}*`, ""];
+  items.forEach((d, i) => {
+    const c = d.card, t = due(d.deadline);
+    lines.push(`*${i + 1}. ${c.title}*${d.updated ? " _(updated)_" : ""}`, c.org,
+      `🗓 ${t.date ? "Register by " + t.date : t.text}`, `🏆 ${c.prizes} · ${c.fee}`, `👥 ${c.eligibility}`, c.url, "");
+  });
+  return lines.join("\n").trim();
+}
+
+function viewDigest() {
+  const items = undigested();
+  if (!items.length) return `<p class="empty">No new approvals since the last digest.</p>`;
+  return `<p class="intro">${items.length} approved competition${items.length > 1 ? "s" : ""} not yet sent. Copy this into WhatsApp, then mark it sent so they don’t repeat.</p>
+    <textarea id="digest" readonly>${esc(digestText(items))}</textarea>
+    <div class="bar"><button class="btn primary" data-act="copy">Copy digest</button><button class="btn" data-act="sent">Mark as sent</button></div>`;
+}
+
+function render() {
+  const tabs = [["review", "Review", reviewItems().length], ["archive", "Archive", archivedOpen().length],
+                ["digest", "Digest", undigested().length], ["listings", "Live", approved().length]];
+  $("tabs").hidden = false;
+  $("tabs").innerHTML = tabs.map(([k, label, n]) =>
+    `<button role="tab" aria-selected="${k === S.tab}" data-tab="${k}">${label}<span class="count">${n}</span></button>`).join("");
+  const synced = S.meta ? `<div class="notice">Last run ${esc(new Date(S.meta.exported_at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }))}.</div>` : "";
+  const views = { review: viewReview, archive: viewArchive, digest: viewDigest, listings: viewListings };
+  $("main").innerHTML = (S.tab === "review" ? synced : "") + views[S.tab]();
+}
+
+// ---------- actions ----------
+async function decide(id, decision, reason) {
+  const q = S.queue.find((x) => String(x.id) === id) || S.archive.find((x) => String(x.id) === id);
+  if (!q || S.busy) return;
+  const prev = S.decisions.get(id);
+  const card = { id: q.id, title: q.title, org: q.org, org_id: q.org_id, url: q.url,
+                 deadline: q.deadline, prizes: q.prizes, fee: q.fee, eligibility: q.eligibility };
+  const row = { listing_id: q.id, decision, reason: reason || null, decided_at: new Date().toISOString(),
+    decided_by: S.user.id, source: S.archive.includes(q) ? "archive" : "queue",
+    updated: !!(prev && prev.decision === "approve" && decision === "approve"),
+    digested_at: null, deadline: q.deadline, card };
+  S.busy = true; S.rejecting = null;
+  const { error } = await sb.from("decisions").upsert(row);
+  S.busy = false;
+  if (error) return toast("Couldn’t save that decision. Check your connection and try again.");
+  S.decisions.set(id, row); render();
+  const label = { approve: "Approved", reject: "Rejected", skip: "Skipped until tomorrow" }[decision];
+  toast(`${label}: ${q.title}`, async () => {
+    const { error: e } = prev ? await sb.from("decisions").upsert(prev) : await sb.from("decisions").delete().eq("listing_id", q.id);
+    if (e) return toast("Couldn’t undo. Try again.");
+    prev ? S.decisions.set(id, prev) : S.decisions.delete(id);
+    render();
+  });
+}
+
+async function copyDigest() {
+  const ta = $("digest");
+  try { await navigator.clipboard.writeText(ta.value); toast("Digest copied"); }
+  catch (e) { ta.select(); toast("Text selected. Copy it from your keyboard or menu."); }
+}
+
+async function markSent() {
+  const ids = undigested().map((d) => d.listing_id), now = new Date().toISOString();
+  const { error } = await sb.from("decisions").update({ digested_at: now }).in("listing_id", ids);
+  if (error) return toast("Couldn’t mark as sent. Try again.");
+  ids.forEach((i) => (S.decisions.get(String(i)).digested_at = now));
+  render(); toast("Marked as sent");
+}
+
+document.addEventListener("click", async (e) => {
+  const tab = e.target.closest("[data-tab]");
+  if (tab) { S.tab = tab.dataset.tab; S.rejecting = null; try { sessionStorage.setItem("desk-tab", S.tab); } catch (x) {} render(); return; }
+  const b = e.target.closest("[data-act]");
+  if (!b) return;
+  const id = b.dataset.id, act = b.dataset.act;
+  if (act === "approve" || act === "rescue") decide(id, "approve");
+  else if (act === "skip") decide(id, "skip");
+  else if (act === "reject") decide(id, "reject", b.dataset.reason);
+  else if (act === "ask-reject") { S.rejecting = id; render(); }
+  else if (act === "cancel") { S.rejecting = null; render(); }
+  else if (act === "copy") copyDigest();
+  else if (act === "sent") markSent();
+  else if (act === "signout") { await sb.auth.signOut(); S.user = null; viewLogin(); }
+});
+
+document.addEventListener("visibilitychange", () => { if (!document.hidden && S.user) loadAll(); });
+start();
+</script>
+</body>
+</html>

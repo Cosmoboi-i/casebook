@@ -1,0 +1,13 @@
+# Pipeline state lives in the Supabase `pipeline` bucket, not in git.
+.venv/
+__pycache__/
+*.pyc
+pipeline.db
+raw/
+logs/
+outbox/
+.env
+.DS_Store
+
+# Old Claude-artifact portal (contains its hardcoded passcode) - not part of the hosted app
+portal/

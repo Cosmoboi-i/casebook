@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Casebook</title>
+<meta name="description" content="Live case competitions, checked by the club.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗂️</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="casebook.css">
+</head>
+<body>
+<header>
+  <div class="wrap masthead">
+    <h1 class="brand">Casebook<small>Live case competitions, checked by the club</small></h1>
+    <div class="meta" id="meta"></div>
+  </div>
+</header>
+<main class="wrap" id="main"><p class="empty">Loading competitions…</p></main>
+<div id="toast" class="toast" hidden></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="casebook.js"></script>
+<script>
+  const sb = supabase.createClient(CASEBOOK.url, CASEBOOK.key, { auth: { persistSession: false } });
+
+  async function load() {
+    // Row-level security returns only approved, still-open competitions here.
+    const { data, error } = await sb.from("decisions")
+      .select("listing_id, updated, deadline, card")
+      .order("deadline", { ascending: true, nullsFirst: false });
+    if (error) {
+      $("main").innerHTML = `<div class="notice bad">Couldn’t load competitions right now. Refresh in a minute.</div>`;
+      return;
+    }
+    const list = data.filter((d) => !due(d.deadline).past);
+    $("meta").textContent = list.length ? `${list.length} open` : "";
+    $("main").innerHTML = list.length
+      ? `<p class="intro">Competitions the club has checked, soonest deadline first. Tap one to register on Unstop.</p>
+         <ul class="rows">${list.map((d) => listingRow(d.card, d.updated)).join("")}</ul>`
+      : `<p class="empty">No open competitions right now. New ones appear here as soon as the club approves them.</p>`;
+  }
+
+  load();
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+</script>
+</body>
+</html>
