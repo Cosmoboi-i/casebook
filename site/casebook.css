@@ -77,6 +77,8 @@ main { padding: 16px 0 96px; }
 .btn.reject { color: var(--bad); border-color: var(--bad); }
 .btn.quiet { color: var(--ink-2); }
 .btn.primary { background: var(--ink); border-color: var(--ink); color: var(--ground); }
+a.btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+.btn.whatsapp { background: #128C4B; border-color: #128C4B; color: #fff; }
 .btn:disabled { opacity: 0.55; cursor: default; }
 .reasons { display: grid; gap: 8px; }
 .reasons p { margin: 0; font-size: 13px; color: var(--ink-2); }

@@ -45,7 +45,7 @@ function viewLogin(msg) {
   $("meta").textContent = "";
   $("main").innerHTML = `<form class="login" id="login">
       <h2>Sign in</h2>
-      <p>Club reviewers only.</p>
+      <p>Reviewers only.</p>
       <label>Email<input id="email" type="email" autocomplete="username" required></label>
       <label>Password<input id="password" type="password" autocomplete="current-password" required></label>
       ${msg ? `<div class="err">${esc(msg)}</div>` : ""}
@@ -61,7 +61,7 @@ async function start() {
   const { data: isAdmin, error } = await sb.rpc("is_admin");
   if (error || !isAdmin) {
     $("main").innerHTML = `<div class="login"><h2>No reviewer access</h2>
-      <p>${esc(S.user.email)} is signed in but isn’t on the reviewer list. Ask the club admin to add it.</p>
+      <p>${esc(S.user.email)} is signed in but isn’t on the reviewer list. Ask the Casebook admin to add it.</p>
       <button class="btn" data-act="signout">Sign out</button></div>`;
     return;
   }
@@ -187,10 +187,18 @@ function digestText(items) {
 
 function viewDigest() {
   const items = undigested();
-  if (!items.length) return `<p class="empty">No new approvals since the last digest.</p>`;
-  return `<p class="intro">${items.length} approved competition${items.length > 1 ? "s" : ""} not yet sent. Copy this into WhatsApp, then mark it sent so they don’t repeat.</p>
-    <textarea id="digest" readonly>${esc(digestText(items))}</textarea>
-    <div class="bar"><button class="btn primary" data-act="copy">Copy digest</button><button class="btn" data-act="sent">Mark as sent</button></div>`;
+  if (!items.length) return `<p class="intro">The digest collects every approved competition you haven’t sent yet.</p>
+    <p class="empty">Nothing to send. Approve competitions in Review or Archive and they’ll appear here, ready for WhatsApp.</p>`;
+  const text = digestText(items);
+  // wa.me opens the WhatsApp app on phones and WhatsApp Web on desktop, with the text
+  // prefilled; the user picks the chat or group and presses send there.
+  return `<p class="intro">${items.length} approved competition${items.length > 1 ? "s" : ""} not yet sent. After you send it, mark it sent so these don’t repeat in the next digest.</p>
+    <div class="bar">
+      <a class="btn whatsapp" href="https://wa.me/?text=${encodeURIComponent(text)}" target="_blank" rel="noopener" data-act="wa">Send to WhatsApp</a>
+      <button class="btn primary" data-act="copy">Copy text</button>
+      <button class="btn" data-act="sent">Mark as sent</button>
+    </div>
+    <textarea id="digest" readonly>${esc(text)}</textarea>`;
 }
 
 function render() {
@@ -255,6 +263,7 @@ document.addEventListener("click", async (e) => {
   else if (act === "ask-reject") { S.rejecting = id; render(); }
   else if (act === "cancel") { S.rejecting = null; render(); }
   else if (act === "copy") copyDigest();
+  else if (act === "wa") toast("Opening WhatsApp. Mark as sent once it’s posted.");
   else if (act === "sent") markSent();
   else if (act === "signout") { await sb.auth.signOut(); S.user = null; viewLogin(); }
 });

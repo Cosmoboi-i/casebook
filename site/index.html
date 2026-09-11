@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Casebook</title>
-<meta name="description" content="Live case competitions, checked by the club.">
+<meta name="description" content="Live case competitions, hand-checked before they’re listed.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗂️</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -14,7 +14,7 @@
 <body>
 <header>
   <div class="wrap masthead">
-    <h1 class="brand">Casebook<small>Live case competitions, checked by the club</small></h1>
+    <h1 class="brand">Casebook<small>Live case competitions, hand-checked</small></h1>
     <div class="meta" id="meta"></div>
   </div>
 </header>
@@ -38,9 +38,9 @@
     const list = data.filter((d) => !due(d.deadline).past);
     $("meta").textContent = list.length ? `${list.length} open` : "";
     $("main").innerHTML = list.length
-      ? `<p class="intro">Competitions the club has checked, soonest deadline first. Tap one to register on Unstop.</p>
+      ? `<p class="intro">Hand-checked competitions, soonest deadline first. Tap one to register on Unstop.</p>
          <ul class="rows">${list.map((d) => listingRow(d.card, d.updated)).join("")}</ul>`
-      : `<p class="empty">No open competitions right now. New ones appear here as soon as the club approves them.</p>`;
+      : `<p class="empty">No open competitions right now. New ones appear here as soon as they’re approved.</p>`;
   }
 
   load();
