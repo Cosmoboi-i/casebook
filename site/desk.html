@@ -195,7 +195,7 @@ function viewDigest() {
   return `<p class="intro">${items.length} approved competition${items.length > 1 ? "s" : ""} not yet sent. After you send it, mark it sent so these don’t repeat in the next digest.</p>
     <div class="bar">
       <a class="btn whatsapp" href="https://wa.me/?text=${encodeURIComponent(text)}" target="_blank" rel="noopener" data-act="wa">Send to WhatsApp</a>
-      <button class="btn primary" data-act="copy">Copy text</button>
+      <button class="btn primary" data-act="copy">Copy digest</button>
       <button class="btn" data-act="sent">Mark as sent</button>
     </div>
     <textarea id="digest" readonly>${esc(text)}</textarea>`;
